@@ -40,9 +40,21 @@ plt.rcParams.update({
 })
 
 OUTPUT_DIR = './figures'
-COLORS = ['#2166AC', '#D6604D', '#4DAF4A', '#FF7F00', '#984EA3',
-          '#A65628', '#F781BF', '#66C2A5', '#FC8D62', '#8DA0CB',
-          '#E78AC3', '#A6D854', '#FFD92F', '#E5C494', '#B3B3B3']
+# 45 类扩展调色板（Tab20 + 额外颜色，共 45 种）
+import matplotlib.cm as cm
+_COLORS20 = plt.cm.tab20.colors if hasattr(plt.cm, 'tab20') else plt.cm.get_cmap('tab20').colors
+_COLORS20b = plt.cm.tab20b.colors if hasattr(plt.cm, 'tab20b') else plt.cm.get_cmap('tab20b').colors
+_COLORS_EXTRA = ['#2166AC', '#D6604D', '#4DAF4A', '#FF7F00', '#984EA3',
+                 '#A65628', '#F781BF', '#66C2A5', '#FC8D62', '#8DA0CB',
+                 '#E78AC3', '#A6D854', '#FFD92F', '#E5C494', '#B3B3B3',
+                 '#1B9E77', '#D95F02', '#7570B3', '#E7298A', '#66A61E',
+                 '#E6AB02', '#A6761D', '#666666', '#1F78B4', '#B2DF8A',
+                 '#33A02C', '#FB9A99', '#E31A1C', '#FDBF6F', '#FF7F00',
+                 '#CAB2D6', '#6A3D9A', '#FFFF99', '#B15928', '#8DD3C7',
+                 '#FFFFB3', '#BEBADA', '#FB8072', '#80B1D3', '#FDB462',
+                 '#B3DE69', '#FCCDE5', '#D9D9D9', '#BC80BD', '#CCEBC5']
+COLORS = list(_COLORS20) + list(_COLORS20b) + _COLORS_EXTRA
+COLORS = COLORS[:45]  # 确保恰好 45 种
 
 
 def evaluate():
@@ -79,26 +91,34 @@ def evaluate():
 
     # ═══════════════════════════════════════════════════════════
     #  Fig 1: 混淆矩阵（原始计数 + 行归一化）
+    #  45 类时需要大尺寸 + 小字号，避免数字重叠
     # ═══════════════════════════════════════════════════════════
     cm = confusion_matrix(all_labels, all_preds)
     cm_norm = cm.astype('float') / cm.sum(axis=1, keepdims=True)
 
-    fig, axes = plt.subplots(1, 2, figsize=(18, 7.5))
+    n_cls = cfg.num_classes
+    # 根据类别数自适应调整图大小和字号
+    figsize_w = max(22, n_cls * 0.55)
+    figsize_h = max(10, n_cls * 0.38)
+    annot_font = max(3.5, 9 - n_cls * 0.12)
+
+    fig, axes = plt.subplots(1, 2, figsize=(figsize_w * 2, figsize_h))
     for ax, data, fmt, title in [
         (axes[0], cm, 'd', '(a) Confusion Matrix — Counts'),
-        (axes[1], cm_norm, '.2f', '(b) Confusion Matrix — Row-normalized'),
+        (axes[1], cm_norm, '.1f', '(b) Confusion Matrix — Row-normalized'),
     ]:
         sns.heatmap(data, annot=True, fmt=fmt, cmap='Blues',
                     xticklabels=cfg.class_names,
                     yticklabels=cfg.class_names,
-                    linewidths=0.3, linecolor='white',
+                    linewidths=0.1, linecolor='white',
                     vmin=0, vmax=data.max() if fmt == 'd' else 1,
-                    ax=ax, cbar_kws={'shrink': 0.8})
-        ax.set_title(title, fontweight='bold', pad=10)
+                    annot_kws={'fontsize': annot_font},
+                    ax=ax, cbar_kws={'shrink': 0.5})
+        ax.set_title(title, fontweight='bold', pad=10, fontsize=14)
         ax.set_xlabel('Predicted Label')
         ax.set_ylabel('True Label')
-        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
-        ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=90, ha='center', fontsize=6)
+        ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize=6)
     plt.tight_layout()
     fig.savefig(os.path.join(OUTPUT_DIR, 'fig1_confusion_matrix.pdf'), format='pdf')
     fig.savefig(os.path.join(OUTPUT_DIR, 'fig1_confusion_matrix.png'))
@@ -114,7 +134,9 @@ def evaluate():
     recalls = [report[cls]['recall'] for cls in cfg.class_names]
     f1s = [report[cls]['f1-score'] for cls in cfg.class_names]
 
-    fig, ax = plt.subplots(figsize=(14, 6))
+    #  45 类时自动加宽，字号缩小
+    fig_w = max(18, n_cls * 0.55)
+    fig, ax = plt.subplots(figsize=(fig_w, 6))
     x = np.arange(len(cfg.class_names))
     width = 0.25
     bars_p = ax.bar(x - width, precisions, width, label='Precision',
@@ -124,7 +146,7 @@ def evaluate():
     bars_f = ax.bar(x + width, f1s, width, label='F1-score',
                     color=COLORS[2], edgecolor='white', linewidth=0.3)
     ax.set_xticks(x)
-    ax.set_xticklabels(cfg.class_names, rotation=45, ha='right')
+    ax.set_xticklabels(cfg.class_names, rotation=90, ha='center', fontsize=6)
     ax.set_ylabel('Score')
     ax.set_title('Per-class Precision, Recall & F1-score', fontweight='bold')
     ax.legend(loc='lower right', frameon=True, fancybox=True)
@@ -196,13 +218,13 @@ def evaluate():
     # ═══════════════════════════════════════════════════════════
     labels_bin = label_binarize(all_labels, classes=range(cfg.num_classes))
 
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(14, 12))
     for i, cls in enumerate(cfg.class_names):
         if labels_bin[:, i].sum() == 0:
             continue
         fpr, tpr, _ = roc_curve(labels_bin[:, i], all_probs[:, i])
         roc_auc = auc(fpr, tpr)
-        ax.plot(fpr, tpr, color=COLORS[i % len(COLORS)], linewidth=1.1,
+        ax.plot(fpr, tpr, color=COLORS[i % len(COLORS)], linewidth=0.8,
                 label=f'{cls}  (AUC={roc_auc:.3f})')
     ax.plot([0, 1], [0, 1], 'k--', linewidth=0.7, alpha=0.4)
     ax.set_xlim(0, 1)
@@ -210,7 +232,7 @@ def evaluate():
     ax.set_ylabel('True Positive Rate')
     ax.set_title('ROC Curves — One-vs-Rest', fontweight='bold')
     ax.legend(loc='lower right', frameon=True, fancybox=True,
-              ncol=2, fontsize=6.5)
+              ncol=3, fontsize=4.5, columnspacing=0.5)
     ax.grid(alpha=0.2, linewidth=0.5)
     ax.set_aspect('equal')
     plt.tight_layout()
@@ -221,14 +243,14 @@ def evaluate():
     # ═══════════════════════════════════════════════════════════
     #  Fig 5: Precision-Recall 曲线（One-vs-Rest），带 AP
     # ═══════════════════════════════════════════════════════════
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(14, 12))
     for i, cls in enumerate(cfg.class_names):
         if labels_bin[:, i].sum() == 0:
             continue
         precision, recall, _ = precision_recall_curve(labels_bin[:, i],
                                                        all_probs[:, i])
         ap = average_precision_score(labels_bin[:, i], all_probs[:, i])
-        ax.plot(recall, precision, color=COLORS[i % len(COLORS)], linewidth=1.1,
+        ax.plot(recall, precision, color=COLORS[i % len(COLORS)], linewidth=0.8,
                 label=f'{cls}  (AP={ap:.3f})')
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1.02)
@@ -236,7 +258,7 @@ def evaluate():
     ax.set_ylabel('Precision')
     ax.set_title('Precision-Recall Curves — One-vs-Rest', fontweight='bold')
     ax.legend(loc='lower left', frameon=True, fancybox=True,
-              ncol=2, fontsize=6.5)
+              ncol=3, fontsize=4.5, columnspacing=0.5)
     ax.grid(alpha=0.2, linewidth=0.5)
     plt.tight_layout()
     fig.savefig(os.path.join(OUTPUT_DIR, 'fig5_pr_curves.pdf'), format='pdf')
@@ -247,18 +269,19 @@ def evaluate():
     #  Fig 6: 每类别样本数量分布图（辅助分析类别不平衡）
     # ═══════════════════════════════════════════════════════════
     class_counts = np.bincount(all_labels, minlength=cfg.num_classes)
-    fig, ax = plt.subplots(figsize=(12, 5))
+    fig_w6 = max(16, n_cls * 0.5)
+    fig, ax = plt.subplots(figsize=(fig_w6, 5))
     bar_colors = [COLORS[i % len(COLORS)] for i in range(cfg.num_classes)]
     bars = ax.bar(range(cfg.num_classes), class_counts, color=bar_colors,
                   edgecolor='white', linewidth=0.3)
     ax.set_xticks(range(cfg.num_classes))
-    ax.set_xticklabels(cfg.class_names, rotation=45, ha='right')
+    ax.set_xticklabels(cfg.class_names, rotation=90, ha='center', fontsize=6)
     ax.set_ylabel('Number of Samples')
     ax.set_title('Test Set Class Distribution', fontweight='bold')
     ax.grid(axis='y', alpha=0.25, linewidth=0.5)
     for bar, count in zip(bars, class_counts):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + max(class_counts) * 0.01,
-                str(count), ha='center', va='bottom', fontsize=7)
+                str(count), ha='center', va='bottom', fontsize=5)
     plt.tight_layout()
     fig.savefig(os.path.join(OUTPUT_DIR, 'fig6_class_distribution.pdf'), format='pdf')
     fig.savefig(os.path.join(OUTPUT_DIR, 'fig6_class_distribution.png'))
@@ -304,11 +327,13 @@ def evaluate():
             per_class_acc.append(0)
 
     metrics_heatmap = np.column_stack([precisions, recalls, f1s, per_class_acc])
-    fig, ax = plt.subplots(figsize=(6, 10))
-    sns.heatmap(metrics_heatmap, annot=True, fmt='.3f', cmap='RdYlGn',
+    fig_h8 = max(12, n_cls * 0.38)
+    fig, ax = plt.subplots(figsize=(6, fig_h8))
+    sns.heatmap(metrics_heatmap, annot=True, fmt='.2f', cmap='RdYlGn',
                 vmin=0, vmax=1, linewidths=0.5, linecolor='white',
                 xticklabels=['Precision', 'Recall', 'F1-score', 'Accuracy'],
                 yticklabels=cfg.class_names,
+                annot_kws={'fontsize': 7},
                 ax=ax, cbar_kws={'shrink': 0.6, 'label': 'Score'})
     ax.set_title('Per-Class Metrics Heatmap', fontweight='bold', pad=10)
     ax.set_xlabel('Metric')
@@ -326,8 +351,8 @@ def evaluate():
     def hook_fn(module, input, output):
         features_store.append(output.detach().cpu().numpy())
 
-    # LSEVGG 分类器: Linear→ReLU→Dropout→Linear→ReLU→Dropout→Linear
-    handle = model.classifier[4].register_forward_hook(hook_fn)
+    # LSEVGG GAP 层输出 512 维特征，作为 t-SNE 输入
+    handle = model.gap.register_forward_hook(hook_fn)
 
     with torch.no_grad():
         for imgs, _ in test_loader:
@@ -336,29 +361,31 @@ def evaluate():
     handle.remove()
 
     features = np.concatenate(features_store)
+    # GAP 输出为 [B, 512, 1, 1]，展平为 [B, 512]
+    if features.ndim == 4:
+        features = features.reshape(features.shape[0], -1)
 
-    # 降维：PCA(4096→50) + t-SNE(50→2)，大幅加速 t-SNE
+    # 512 维直接用 t-SNE，无需 PCA 降维
     n_tsne = min(3000, len(features))
     rng = np.random.RandomState(42)
     subset_idx = rng.choice(len(features), n_tsne, replace=False)
     features_sub = features[subset_idx]
     labels_sub = all_labels[subset_idx]
 
-    features_pca = PCA(n_components=50, random_state=42).fit_transform(features_sub)
     features_tsne = TSNE(n_components=2, perplexity=30, random_state=42,
-                         max_iter=1000).fit_transform(features_pca)
+                         max_iter=1000).fit_transform(features_sub)
 
-    fig, ax = plt.subplots(figsize=(12, 9))
+    fig, ax = plt.subplots(figsize=(16, 12))
     for i, cls in enumerate(cfg.class_names):
         mask = labels_sub == i
         ax.scatter(features_tsne[mask, 0], features_tsne[mask, 1],
-                   c=[COLORS[i % len(COLORS)]], label=cls, s=6, alpha=0.7,
+                   c=[COLORS[i % len(COLORS)]], label=cls, s=4, alpha=0.7,
                    edgecolors='none', rasterized=True)
     ax.set_xlabel('t-SNE Dim 1')
     ax.set_ylabel('t-SNE Dim 2')
     ax.set_title('t-SNE Visualization of Penultimate Layer Features', fontweight='bold')
     ax.legend(loc='lower left', frameon=True, fancybox=True,
-              ncol=3, fontsize=6.5, markerscale=2)
+              ncol=5, fontsize=4.5, markerscale=1.5, columnspacing=0.5)
     ax.grid(alpha=0.15, linewidth=0.5)
     plt.tight_layout()
     fig.savefig(os.path.join(OUTPUT_DIR, 'fig9_tsne_embedding.pdf'), format='pdf')

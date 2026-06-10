@@ -1,17 +1,15 @@
 import torch
 import torch.nn as nn
 
-class SEBlock(nn.Module):
-    """Squeeze-and-Excitation 通道注意力模块。
 
-    通过全局平均池化提取通道统计信息，再学习每个通道的重要性权重，
-    从而增强有效特征、抑制无关特征。
+class SEBlock(nn.Module):
+    """Squeeze-and-Excitation 通道注意力。
+
+    全局池化 → FC→ReLU→FC→Sigmoid 学习通道权重，增强有效通道、抑制噪声。
     """
     def __init__(self, channels, reduction=16):
         super(SEBlock, self).__init__()
-        # squeeze：把空间维度压缩成 1x1 的通道描述符
         self.squeeze = nn.AdaptiveAvgPool2d(1)
-        # excitation：两层全连接学习通道之间的依赖关系
         self.excitation = nn.Sequential(
             nn.Linear(channels, channels // reduction),
             nn.ReLU(inplace=True),
@@ -20,129 +18,130 @@ class SEBlock(nn.Module):
         )
 
     def forward(self, x):
-        # b: batch size, c: channels
         b, c, _, _ = x.size()
         y = self.squeeze(x).view(b, c)
         y = self.excitation(y).view(b, c, 1, 1)
-        # 将通道权重逐元素作用到原特征图上
         return x * y
 
 
 class DepthwiseSeparableConv(nn.Module):
-    """深度可分离卷积：Depthwise Conv + Pointwise Conv。
+    """深度可分离卷积：Depthwise → BN → SiLU → Pointwise → BN → SiLU。
 
-    先按通道做空间卷积，再用 1x1 卷积融合通道，参数量和计算量都更小。
+    SiLU (Swish) 相比 ReLU 保留负值小梯度，避免深层神经元"死亡"。
     """
     def __init__(self, in_ch, out_ch, stride=1):
         super(DepthwiseSeparableConv, self).__init__()
-        # Depthwise：每个输入通道单独做 3x3 卷积
         self.depthwise = nn.Conv2d(
             in_ch, in_ch, kernel_size=3, stride=stride,
             padding=1, groups=in_ch, bias=False
         )
         self.bn_depth = nn.BatchNorm2d(in_ch)
-        # Pointwise：用 1x1 卷积完成通道混合并调整通道数
         self.pointwise = nn.Conv2d(in_ch, out_ch, kernel_size=1, bias=False)
         self.bn_point = nn.BatchNorm2d(out_ch)
-        self.relu = nn.ReLU(inplace=True)
+        self.act = nn.SiLU(inplace=True)
 
     def forward(self, x):
-        x = self.relu(self.bn_depth(self.depthwise(x)))
-        x = self.relu(self.bn_point(self.pointwise(x)))
+        x = self.act(self.bn_depth(self.depthwise(x)))
+        x = self.act(self.bn_point(self.pointwise(x)))
         return x
 
 
-class LSEVGG(nn.Module):
-    """LSEVGG：轻量级 SE-VGG 风格网络。
+class ResidualBlock(nn.Module):
+    """残差块：两个 DSC + SE 注意力 + 跳跃连接。
 
-    结构上保留了 VGG 的分阶段堆叠方式，同时用深度可分离卷积降低开销，
-    再通过 SE 模块增强通道表达能力。num_classes 可按数据集配置。
+    跳跃连接为梯度提供"高速通道"，即使网络很深，浅层也能收到有效梯度，
+    从而更好地学习细粒度特征（如 small-vehicle 与 large-vehicle 的纹理差异）。
     """
+    def __init__(self, in_ch, out_ch, use_se=True, se_reduction=16):
+        super(ResidualBlock, self).__init__()
+        self.dsc1 = DepthwiseSeparableConv(in_ch, out_ch)
+        self.dsc2 = DepthwiseSeparableConv(out_ch, out_ch)
+        self.se = SEBlock(out_ch, reduction=se_reduction) if use_se else nn.Identity()
+        self.act = nn.SiLU(inplace=True)
+
+        # 通道数变化时，用 1×1 卷积对齐跳跃连接的维度
+        self.skip = nn.Identity()
+        if in_ch != out_ch:
+            self.skip = nn.Sequential(
+                nn.Conv2d(in_ch, out_ch, kernel_size=1, bias=False),
+                nn.BatchNorm2d(out_ch)
+            )
+
+    def forward(self, x):
+        identity = self.skip(x)
+        out = self.dsc1(x)          # 内含 BN→SiLU
+        out = self.dsc2(out)        # 内含 BN→SiLU
+        out = self.se(out)          # 通道注意力
+        out = out + identity        # 残差连接
+        out = self.act(out)         # 融合后激活
+        return out
+
+
+class LSEVGG(nn.Module):
+    """LSEVGG v3：残差 SE-VGG + GAP 分类头。
+
+    相比 v1 的改进：
+    1. 残差跳跃连接 — 梯度直达浅层，细粒度特征学习能力显著提升
+    2. SiLU (Swish) 激活 — 消除 ReLU 神经元死亡问题
+    3. GAP + 轻量分类头 — 参数量从 121M → ~2.2M，大幅减少过拟合
+
+    输入: [B, 3, 224, 224]    输出: [B, num_classes]
+    """
+
     def __init__(self, num_classes=15):
         super(LSEVGG, self).__init__()
 
-        # Block 1：先用标准卷积建立浅层特征，再进入轻量卷积和注意力模块
-        self.block1 = nn.Sequential(
+        # ── Stem：标准卷积建立浅层特征 ──
+        self.stem = nn.Sequential(
             nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            DepthwiseSeparableConv(64, 64),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            SEBlock(64),
-            nn.MaxPool2d(2, 2)
+            nn.SiLU(inplace=True)
         )
 
-        # Block 2：逐步提升通道数，扩大表征能力
-        self.block2 = nn.Sequential(
-            DepthwiseSeparableConv(64, 128),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            DepthwiseSeparableConv(128, 128),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            SEBlock(128),
-            nn.MaxPool2d(2, 2)
+        # ── Stage 1: 64ch, 224→112  ──
+        self.stage1 = nn.Sequential(
+            ResidualBlock(64, 64, use_se=True),
+            nn.MaxPool2d(2)
         )
 
-        # Block 3：继续加深网络，让模型捕获更复杂的局部结构
-        self.block3 = nn.Sequential(
-            DepthwiseSeparableConv(128, 256),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            DepthwiseSeparableConv(256, 256),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            DepthwiseSeparableConv(256, 256),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            SEBlock(256),
-            nn.MaxPool2d(2, 2)
+        # ── Stage 2: 64→128ch, 112→56  ──
+        self.stage2 = nn.Sequential(
+            ResidualBlock(64, 128, use_se=True),
+            nn.MaxPool2d(2)
         )
 
-        # Block 4：中高层语义特征提取
-        self.block4 = nn.Sequential(
-            DepthwiseSeparableConv(256, 512),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            DepthwiseSeparableConv(512, 512),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            DepthwiseSeparableConv(512, 512),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            SEBlock(512),
-            nn.MaxPool2d(2, 2)
+        # ── Stage 3: 128→256ch, 56→28  ──
+        self.stage3 = nn.Sequential(
+            ResidualBlock(128, 256, use_se=True),
+            ResidualBlock(256, 256, use_se=True),
+            nn.MaxPool2d(2)
         )
 
-        # Block 5：进一步压缩空间尺寸，提升语义抽象程度
-        self.block5 = nn.Sequential(
-            DepthwiseSeparableConv(512, 512),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            DepthwiseSeparableConv(512, 512),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            DepthwiseSeparableConv(512, 512),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            SEBlock(512),
-            nn.MaxPool2d(2, 2)
+        # ── Stage 4: 256→512ch, 28→14  ──
+        self.stage4 = nn.Sequential(
+            ResidualBlock(256, 512, use_se=True),
+            ResidualBlock(512, 512, use_se=True),
+            nn.MaxPool2d(2)
         )
 
-        # 自适应池化到固定特征尺寸，再接全连接分类头
-        self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
+        # ── Stage 5: 512ch, 14→7  ──
+        self.stage5 = nn.Sequential(
+            ResidualBlock(512, 512, use_se=True),
+            ResidualBlock(512, 512, use_se=True),
+            nn.MaxPool2d(2)
+        )
+
+        # ── GAP + 轻量分类头 ──
+        self.gap = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Sequential(
-            nn.Linear(512 * 7 * 7, 4096),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(4096, 4096),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(4096, num_classes)
+            nn.Flatten(),
+            nn.Dropout(0.4),
+            nn.Linear(512, 256),
+            nn.SiLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(256, num_classes)
         )
 
-        # 初始化所有层参数，保证训练初期更稳定
         self._initialize_weights()
 
     def _initialize_weights(self):
@@ -159,16 +158,13 @@ class LSEVGG(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
-        # 按顺序经过五个特征提取阶段
-        x = self.block1(x)
-        x = self.block2(x)
-        x = self.block3(x)
-        x = self.block4(x)
-        x = self.block5(x)
-        # 压缩空间维度，保留通道语义信息
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        # 输出每个类别的 logits，供交叉熵损失使用
+        x = self.stem(x)
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        x = self.stage4(x)
+        x = self.stage5(x)
+        x = self.gap(x)
         x = self.classifier(x)
         return x
 
@@ -176,15 +172,13 @@ class LSEVGG(nn.Module):
 def build_model(num_classes=15, pretrained_path=None):
     """构建 LSEVGG 模型，并可选择加载预训练权重。
 
-    若分类类别数不同，只加载形状匹配的参数，避免分类头维度不一致报错。
+    兼容 v1/v2/v3 的保存格式；只加载名称、形状均匹配的参数。
     """
     model = LSEVGG(num_classes=num_classes)
     if pretrained_path:
-        # 兼容训练保存的 checkpoint 或纯 state_dict 文件
         state_dict = torch.load(pretrained_path, map_location='cpu')
-        if 'model_state_dict' in state_dict:   # 兼容训练保存的检查点
+        if 'model_state_dict' in state_dict:
             state_dict = state_dict['model_state_dict']
-        # 只保留名称和形状都匹配的参数，其余参数按当前模型初始化值保留
         model_dict = model.state_dict()
         filtered_dict = {k: v for k, v in state_dict.items()
                          if k in model_dict and model_dict[k].shape == v.shape}
@@ -195,7 +189,6 @@ def build_model(num_classes=15, pretrained_path=None):
 
 
 if __name__ == '__main__':
-    # 直接运行本文件时，快速检查模型输出形状是否正确
     model = build_model(num_classes=15)
     x = torch.randn(2, 3, 224, 224)
     y = model(x)

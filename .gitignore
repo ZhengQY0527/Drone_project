@@ -1,35 +1,76 @@
-# Python cache
+# ═══════════════════════════════════════
+#  Python
+# ═══════════════════════════════════════
 __pycache__/
 *.py[cod]
 *.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+*.so
 
-# PyTorch / Training artifacts
+# ═══════════════════════════════════════
+#  PyTorch / Training artifacts
+# ═══════════════════════════════════════
 *.pth
 *.pt
+*.ckpt
 checkpoints/
+checkpoints_nwpu/
 logs/
+logs_nwpu/
 
-# Data & figures (large generated files)
-data_slices/
+# ═══════════════════════════════════════
+#  Datasets & Generated data (too large)
+# ═══════════════════════════════════════
 DOTA/
+NWPU-RESISC45/
+data_slices/
+data_slices_nwpu/
 all_slices/
-figures/
 
-# IDE
+# ═══════════════════════════════════════
+#  Generated figures & reports
+# ═══════════════════════════════════════
+figures/
+*.docx
+
+# ═══════════════════════════════════════
+#  IDE & Editor
+# ═══════════════════════════════════════
 .vscode/
 .idea/
+.claude/
+*.swp
+*.swo
+*~
 
-# Jupyter
+# ═══════════════════════════════════════
+#  Jupyter
+# ═══════════════════════════════════════
 .ipynb_checkpoints/
+*.ipynb
 
-# Virtual environment
+# ═══════════════════════════════════════
+#  Virtual environment
+# ═══════════════════════════════════════
 venv/
 env/
 .venv/
+.conda/
 
-# OS files
+# ═══════════════════════════════════════
+#  OS files
+# ═══════════════════════════════════════
 .DS_Store
 Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
-# Environment
+# ═══════════════════════════════════════
+#  Environment & secrets
+# ═══════════════════════════════════════
 .env
+.env.local
+*.local

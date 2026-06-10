@@ -8,17 +8,22 @@ class Config:
     raw_val_label_dir   = "./DOTA/val/labelTxt"
 
     # 切片后的数据保存根目录：预处理后会按 train/val/test 和类别名组织
-    slice_root = "./data_slices"                     # 生成切片数据集根目录
+    slice_root = "./data_slices_nwpu"
     train_dir = os.path.join(slice_root, "train")
     val_dir   = os.path.join(slice_root, "val")
     test_dir  = os.path.join(slice_root, "test")
 
-    # DOTA-v1.0 的 15 个类别，顺序必须保持一致，否则标签索引会错位
+    # NWPU-RESISC45 的 45 个类别
     class_names = [
-        'plane', 'ship', 'storage-tank', 'baseball-diamond',
-        'tennis-court', 'basketball-court', 'ground-track-field',
-        'harbor', 'bridge', 'large-vehicle', 'small-vehicle',
-        'helicopter', 'roundabout', 'soccer-ball-field', 'swimming-pool'
+        'airplane', 'airport', 'baseball_diamond', 'basketball_court', 'beach',
+        'bridge', 'chaparral', 'church', 'circular_farmland', 'cloud',
+        'commercial_area', 'dense_residential', 'desert', 'forest', 'freeway',
+        'golf_course', 'ground_track_field', 'harbor', 'industrial_area', 'intersection',
+        'island', 'lake', 'meadow', 'medium_residential', 'mobile_home_park',
+        'mountain', 'overpass', 'palace', 'parking_lot', 'railway',
+        'railway_station', 'rectangular_farmland', 'river', 'roundabout', 'runway',
+        'sea_ice', 'ship', 'snowberg', 'sparse_residential', 'stadium',
+        'storage_tank', 'tennis_court', 'terrace', 'thermal_power_station', 'wetland'
     ]
     num_classes = len(class_names)
 
