@@ -18,8 +18,10 @@ build/
 *.ckpt
 checkpoints/
 checkpoints_nwpu/
+checkpoints_baseline/
 logs/
 logs_nwpu/
+logs_baseline/
 
 # ═══════════════════════════════════════
 #  Datasets & Generated data (too large)
@@ -34,6 +36,7 @@ all_slices/
 #  Generated figures & reports
 # ═══════════════════════════════════════
 figures/
+figures_baseline/
 *.docx
 
 # ═══════════════════════════════════════

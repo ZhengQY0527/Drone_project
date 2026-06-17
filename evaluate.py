@@ -2,6 +2,7 @@ import torch
 import json
 import os
 import numpy as np
+from datetime import datetime
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -39,7 +40,7 @@ plt.rcParams.update({
     'image.cmap': 'Blues',
 })
 
-OUTPUT_DIR = './figures'
+OUTPUT_DIR = os.path.join('./figures', datetime.now().strftime('%Y%m%d_%H%M%S'))
 # 45 类扩展调色板（Tab20 + 额外颜色，共 45 种）
 import matplotlib.cm as cm
 _COLORS20 = plt.cm.tab20.colors if hasattr(plt.cm, 'tab20') else plt.cm.get_cmap('tab20').colors
